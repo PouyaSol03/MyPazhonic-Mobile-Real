@@ -20,6 +20,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewAssetLoader
 import com.example.mypazhonictest.bridge.WebViewBridge
+import com.example.mypazhonictest.data.local.prefs.BiometricCredentialStore
 import com.example.mypazhonictest.data.local.prefs.BiometricPrefs
 import com.example.mypazhonictest.data.repository.UserRepository
 import dagger.hilt.android.AndroidEntryPoint
@@ -36,6 +37,9 @@ class MainActivity : AppCompatActivity() {
 
     @Inject
     lateinit var biometricPrefs: BiometricPrefs
+
+    @Inject
+    lateinit var biometricCredentialStore: BiometricCredentialStore
 
     private lateinit var webView: WebView
     private var splashView: View? = null
@@ -106,8 +110,11 @@ class MainActivity : AppCompatActivity() {
             .build()
 
         val bridge = WebViewBridge(
+            activity = this,
+            webView = webView,
             userRepository = userRepository,
             biometricPrefs = biometricPrefs,
+            biometricCredentialStore = biometricCredentialStore,
             mainHandler = handler,
             onReactReady = { tryHideSplashAfterLoad() }
         )

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.example.mypazhonictest.data.local.dao.UserDao
 import com.example.mypazhonictest.data.local.db.AppDatabase
+import com.example.mypazhonictest.data.local.prefs.BiometricCredentialStore
 import com.example.mypazhonictest.data.local.prefs.BiometricPrefs
 import com.example.mypazhonictest.data.local.prefs.SessionPrefs
 import com.example.mypazhonictest.data.repository.UserRepository
@@ -60,5 +61,13 @@ object AppModule {
         @ApplicationContext context: Context
     ): BiometricPrefs {
         return BiometricPrefs(context)
+    }
+
+    @Provides
+    @Singleton
+    fun provideBiometricCredentialStore(
+        @ApplicationContext context: Context
+    ): BiometricCredentialStore {
+        return BiometricCredentialStore(context)
     }
 }

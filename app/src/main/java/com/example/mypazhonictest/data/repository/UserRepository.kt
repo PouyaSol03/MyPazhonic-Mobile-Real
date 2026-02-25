@@ -47,6 +47,14 @@ class UserRepository(
         userDao.deleteAll()
     }
 
+    /**
+     * Restore session and user for biometric login (after logout, user is re-inserted and session set).
+     */
+    suspend fun restoreSessionAndUser(token: String, user: UserEntity) {
+        userDao.upsert(user)
+        sessionPrefs.setSession(token, user.id)
+    }
+
     /** Returns current session token or null if not logged in. */
     suspend fun getSessionToken(): String? = sessionPrefs.getSessionToken()
 }

@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.webkit.ConsoleMessage
@@ -18,15 +19,36 @@ import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewAssetLoader
+import com.example.mypazhonictest.bridge.WebViewBridge
+import com.example.mypazhonictest.data.local.prefs.BiometricPrefs
+import com.example.mypazhonictest.data.repository.UserRepository
+import dagger.hilt.android.AndroidEntryPoint
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import javax.inject.Inject
 
+@AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
 
+    @Inject
+    lateinit var userRepository: UserRepository
+
+    @Inject
+    lateinit var biometricPrefs: BiometricPrefs
+
     private lateinit var webView: WebView
+    private var splashView: View? = null
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var webViewBackCallback: OnBackPressedCallback
+
+    /** Hide splash if load never completes (e.g. error). */
+    private val splashHideFallback = Runnable { hideSplash() }
+
+    /** Used to hide splash after minimum duration when load is done. */
+    private val splashMinDurationHideRunnable = Runnable { hideSplash() }
+
+    private var splashShownAt = 0L
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,12 +58,41 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_main)
         webView = findViewById(R.id.webView)
+        splashView = findViewById(R.id.splashInclude)
+        splashShownAt = SystemClock.elapsedRealtime()
 
         setupWebView()
         setupBackPressHandler()
+        scheduleSplashFallback()
 
         Log.d("WebView", "Loading offline app from assets: $APP_START_URL")
         webView.loadUrl(APP_START_URL)
+    }
+
+    /** Fallback: hide splash if load never completes (e.g. error). */
+    private fun scheduleSplashFallback() {
+        handler.postDelayed(splashHideFallback, SPLASH_FALLBACK_DELAY_MS)
+    }
+
+    /** Hides splash only after at least SPLASH_MIN_DURATION_MS have passed. Call when page has loaded or React is ready. */
+    private fun tryHideSplashAfterLoad() {
+        handler.removeCallbacks(splashMinDurationHideRunnable)
+        val elapsed = SystemClock.elapsedRealtime() - splashShownAt
+        val delay = (SPLASH_MIN_DURATION_MS - elapsed).coerceAtLeast(0L)
+        handler.postDelayed(splashMinDurationHideRunnable, delay)
+    }
+
+    private fun hideSplash() {
+        handler.removeCallbacks(splashHideFallback)
+        handler.removeCallbacks(splashMinDurationHideRunnable)
+        val splash = splashView ?: return
+        splash.animate()
+            .alpha(0f)
+            .setDuration(250)
+            .withEndAction {
+                splash.visibility = View.GONE
+            }
+            .start()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -53,6 +104,14 @@ class MainActivity : AppCompatActivity() {
             .setDomain(APP_ASSET_DOMAIN)
             .addPathHandler("/", ReactAppPathHandler(this))
             .build()
+
+        val bridge = WebViewBridge(
+            userRepository = userRepository,
+            biometricPrefs = biometricPrefs,
+            mainHandler = handler,
+            onReactReady = { tryHideSplashAfterLoad() }
+        )
+        webView.addJavascriptInterface(bridge, "AndroidBridge")
 
         webView.settings.apply {
             javaScriptEnabled = true
@@ -109,6 +168,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 Log.d("WebView", "Page finished: $url")
+                tryHideSplashAfterLoad()
                 if (::webViewBackCallback.isInitialized) {
                     handler.postDelayed({
                         webViewBackCallback.isEnabled = webView.canGoBack()
@@ -175,7 +235,9 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val APP_ASSET_DOMAIN = "appassets.androidplatform.net"
-        private const val APP_START_URL = "https://$APP_ASSET_DOMAIN/"
+        private const val APP_START_URL = "https://appassets.androidplatform.net/"
+        private const val SPLASH_MIN_DURATION_MS = 3_000L
+        private const val SPLASH_FALLBACK_DELAY_MS = 10_000L
     }
 }
 
@@ -194,14 +256,16 @@ private class ReactAppPathHandler(private val context: Context) : WebViewAssetLo
 
         return try {
             if (assetPath.endsWith("index.html")) {
-                htmlResponseWithBase(readAssetText(context, assetPath))
+                val html = injectReactReadyScript(injectBaseHref(readAssetText(context, assetPath)))
+                htmlResponseWithBase(html)
             } else {
                 binaryAssetResponse(context, assetPath)
             }
         } catch (_: IOException) {
             if (!appRelativePath.contains('.') && appRelativePath != "index.html") {
                 try {
-                    htmlResponseWithBase(readAssetText(context, "$REACT_ASSET_ROOT/index.html"))
+                    val html = injectReactReadyScript(injectBaseHref(readAssetText(context, "$REACT_ASSET_ROOT/index.html")))
+                    htmlResponseWithBase(html)
                 } catch (_: IOException) {
                     null
                 }
@@ -216,6 +280,25 @@ private class ReactAppPathHandler(private val context: Context) : WebViewAssetLo
         if (path.contains('.')) return false
         return true
     }
+}
+
+/** Injects a script so that when React dispatches the custom event "react-ready", the bridge's onReactReady() is called. */
+private fun injectReactReadyScript(html: String): String {
+    val script = """
+        <script>
+        (function() {
+          window.addEventListener('react-ready', function() {
+            if (window.AndroidBridge && typeof window.AndroidBridge.onReactReady === 'function') {
+              window.AndroidBridge.onReactReady();
+            }
+          });
+        })();
+        </script>
+    """.trimIndent()
+    if (html.contains("</body>", ignoreCase = true)) {
+        return html.replace(Regex("</body\\s*>", RegexOption.IGNORE_CASE), "$script\n</body>")
+    }
+    return html + script
 }
 
 private fun injectBaseHref(html: String): String {

@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">MyPazhonicTest</string>
+    <string name="splash_logo_content_description">Pazhonic logo</string>
+    <string name="splash_typo_content_description">Pazhonic</string>
 </resources>

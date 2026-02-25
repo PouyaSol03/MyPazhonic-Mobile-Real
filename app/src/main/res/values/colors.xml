@@ -7,4 +7,7 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!-- Splash gradient (Pazhonic style) -->
+    <color name="splash_gradient_start">#FFEFF6F9</color>
+    <color name="splash_gradient_end">#FFDDEFF3</color>
 </resources>

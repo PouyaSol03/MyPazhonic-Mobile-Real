@@ -18,12 +18,20 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebViewAssetLoader
 import com.example.mypazhonictest.bridge.WebViewBridge
+import com.example.mypazhonictest.data.local.dao.LocationDao
 import com.example.mypazhonictest.data.local.prefs.BiometricCredentialStore
+import com.example.mypazhonictest.data.local.seed.LocationSeeder
 import com.example.mypazhonictest.data.local.prefs.BiometricPrefs
+import com.example.mypazhonictest.data.repository.LocationRepository
+import com.example.mypazhonictest.data.repository.PanelFolderRepository
+import com.example.mypazhonictest.data.repository.PanelRepository
 import com.example.mypazhonictest.data.repository.UserRepository
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.nio.charset.StandardCharsets
@@ -40,6 +48,18 @@ class MainActivity : AppCompatActivity() {
 
     @Inject
     lateinit var biometricCredentialStore: BiometricCredentialStore
+
+    @Inject
+    lateinit var locationDao: LocationDao
+
+    @Inject
+    lateinit var locationRepository: LocationRepository
+
+    @Inject
+    lateinit var panelRepository: PanelRepository
+
+    @Inject
+    lateinit var panelFolderRepository: PanelFolderRepository
 
     private lateinit var webView: WebView
     private var splashView: View? = null
@@ -68,6 +88,7 @@ class MainActivity : AppCompatActivity() {
         setupWebView()
         setupBackPressHandler()
         scheduleSplashFallback()
+        lifecycleScope.launch(Dispatchers.IO) { LocationSeeder.seedIfNeeded(locationDao) }
 
         Log.d("WebView", "Loading offline app from assets: $APP_START_URL")
         webView.loadUrl(APP_START_URL)
@@ -113,6 +134,9 @@ class MainActivity : AppCompatActivity() {
             activity = this,
             webView = webView,
             userRepository = userRepository,
+            locationRepository = locationRepository,
+            panelRepository = panelRepository,
+            panelFolderRepository = panelFolderRepository,
             biometricPrefs = biometricPrefs,
             biometricCredentialStore = biometricCredentialStore,
             mainHandler = handler,

@@ -8,9 +8,16 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.example.mypazhonictest.data.local.entity.LocationEntity
+import com.example.mypazhonictest.data.local.entity.LocationType
+import com.example.mypazhonictest.data.local.entity.PanelEntity
+import com.example.mypazhonictest.data.local.entity.PanelFolderEntity
 import com.example.mypazhonictest.data.local.entity.UserEntity
 import com.example.mypazhonictest.data.local.prefs.BiometricCredentialStore
 import com.example.mypazhonictest.data.local.prefs.BiometricPrefs
+import com.example.mypazhonictest.data.repository.LocationRepository
+import com.example.mypazhonictest.data.repository.PanelFolderRepository
+import com.example.mypazhonictest.data.repository.PanelRepository
 import com.example.mypazhonictest.data.repository.UserRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -25,6 +32,9 @@ class WebViewBridge(
     private val activity: FragmentActivity,
     private val webView: WebView,
     private val userRepository: UserRepository,
+    private val locationRepository: LocationRepository,
+    private val panelRepository: PanelRepository,
+    private val panelFolderRepository: PanelFolderRepository,
     private val biometricPrefs: BiometricPrefs,
     private val biometricCredentialStore: BiometricCredentialStore,
     private val mainHandler: Handler,
@@ -61,12 +71,10 @@ class WebViewBridge(
                     password = password
                 )
                 userRepository.registerLocalUser(user)
-                """{"success":true}"""
+                BridgeJson.success()
             } catch (e: Exception) {
                 Log.e(TAG, "registerUser error", e)
-                val msg = e.message?.takeIf { it.isNotEmpty() }?.replace("\"", "'")
-                    ?: "خطایی رخ داد. لطفا دوباره تلاش کنید."
-                """{"success":false,"error":"$msg"}"""
+                BridgeJson.error(userFacingMessage(e))
             }
         }
     }
@@ -85,15 +93,13 @@ class WebViewBridge(
                             userToJsonWithPassword(result.user)
                         )
                     }
-                    """{"success":true,"token":"${escapeJson(result.token)}","user":${userToJson(result.user)}}"""
+                    BridgeJson.loginSuccess(result.token, userToJson(result.user))
                 } else {
-                    """{"success":false,"error":"شماره موبایل یا رمز عبور اشتباه است"}"""
+                    BridgeJson.error("شماره موبایل یا رمز عبور اشتباه است")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "login error", e)
-                val msg = e.message?.takeIf { it.isNotEmpty() }?.replace("\"", "'")
-                    ?: "خطایی رخ داد. لطفا دوباره تلاش کنید."
-                """{"success":false,"error":"$msg"}"""
+                BridgeJson.error(userFacingMessage(e))
             }
         }
     }
@@ -103,13 +109,10 @@ class WebViewBridge(
     fun getSessionToken(): String {
         return runBlocking(Dispatchers.IO) {
             try {
-                val token = userRepository.getSessionToken()
-                if (token != null) """{"token":"${escapeJson(token)}"}""" else """{"token":null}"""
+                BridgeJson.tokenResult(userRepository.getSessionToken())
             } catch (e: Exception) {
                 Log.e(TAG, "getSessionToken error", e)
-                val msg = e.message?.takeIf { it.isNotEmpty() }?.replace("\"", "'")
-                    ?: "خطایی رخ داد. لطفا دوباره تلاش کنید."
-                """{"token":null,"error":"$msg"}"""
+                BridgeJson.tokenError(userFacingMessage(e))
             }
         }
     }
@@ -120,12 +123,10 @@ class WebViewBridge(
         return runBlocking(Dispatchers.IO) {
             try {
                 val user = userRepository.getLatestUser()
-                if (user != null) """{"user":${userToJson(user)}}""" else """{"user":null}"""
+                if (user != null) BridgeJson.userResult(userToJson(user)) else BridgeJson.userResult("null")
             } catch (e: Exception) {
                 Log.e(TAG, "getLatestUser error", e)
-                val msg = e.message?.takeIf { it.isNotEmpty() }?.replace("\"", "'")
-                    ?: "خطایی رخ داد. لطفا دوباره تلاش کنید."
-                """{"user":null,"error":"$msg"}"""
+                BridgeJson.userNullError(userFacingMessage(e))
             }
         }
     }
@@ -175,6 +176,314 @@ class WebViewBridge(
         }
     }
 
+    /** Get locations by type. type = "COUNTRY" | "STATE" | "COUNTY" | "CITY". Returns JSON: { "locations": [ { id, name, type, parentId, code?, sortOrder }, ... ] } or { "locations": [], "error": "..." }. */
+    @JavascriptInterface
+    fun getLocationsByType(type: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val locationType = parseLocationType(type)
+                    ?: return@runBlocking BridgeJson.locationsError("نوع نامعتبر: $type")
+                val list = locationRepository.getByType(locationType)
+                BridgeJson.locationsResult(locationsToJsonArray(list))
+            } catch (e: Exception) {
+                Log.e(TAG, "getLocationsByType error", e)
+                BridgeJson.locationsError(userFacingMessage(e))
+            }
+        }
+    }
+
+    /** Get direct children of a parent. parentId = long string (e.g. "1" for country, "10" for Tehran state). Returns same shape as getLocationsByType. */
+    @JavascriptInterface
+    fun getLocationsByParentId(parentId: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val id = parentId.trim().toLongOrNull()
+                    ?: return@runBlocking BridgeJson.locationsError("شناسه والد نامعتبر است")
+                val list = locationRepository.getByParentId(id)
+                BridgeJson.locationsResult(locationsToJsonArray(list))
+            } catch (e: Exception) {
+                Log.e(TAG, "getLocationsByParentId error", e)
+                BridgeJson.locationsError(userFacingMessage(e))
+            }
+        }
+    }
+
+    /** Get locations of given type with specific parent. type = "COUNTRY"|"STATE"|"COUNTY"|"CITY", parentId = long string. Returns same shape. */
+    @JavascriptInterface
+    fun getLocationsByTypeAndParent(type: String, parentId: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val locationType = parseLocationType(type)
+                    ?: return@runBlocking BridgeJson.locationsError("نوع نامعتبر: $type")
+                val id = parentId.trim().toLongOrNull()
+                    ?: return@runBlocking BridgeJson.locationsError("شناسه والد نامعتبر است")
+                val list = locationRepository.getByTypeAndParentId(locationType, id)
+                BridgeJson.locationsResult(locationsToJsonArray(list))
+            } catch (e: Exception) {
+                Log.e(TAG, "getLocationsByTypeAndParent error", e)
+                BridgeJson.locationsError(userFacingMessage(e))
+            }
+        }
+    }
+
+    private fun parseLocationType(value: String): LocationType? =
+        LocationType.entries.find { it.name.equals(value.trim(), ignoreCase = true) }
+
+    private fun locationToJson(loc: LocationEntity): String {
+        val o = JSONObject()
+        o.put("id", loc.id)
+        o.put("name", loc.name)
+        o.put("type", loc.type.name)
+        o.put("parentId", loc.parentId ?: JSONObject.NULL)
+        if (loc.code != null) o.put("code", loc.code)
+        o.put("sortOrder", loc.sortOrder)
+        return o.toString()
+    }
+
+    private fun locationsToJsonArray(list: List<LocationEntity>): String =
+        if (list.isEmpty()) "[]" else list.joinToString(prefix = "[", postfix = "]", transform = ::locationToJson)
+
+    private fun currentUserIdOrNull(): Long? = runBlocking(Dispatchers.IO) {
+        userRepository.getLatestUser()?.id
+    }
+
+    @JavascriptInterface
+    fun getPanelsForUser(): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.panelsError("لطفا وارد شوید")
+                val list = panelRepository.getByUserId(userId)
+                BridgeJson.panelsResult(panelsToJsonArray(list))
+            } catch (e: Exception) {
+                Log.e(TAG, "getPanelsForUser error", e)
+                BridgeJson.panelsError(userFacingMessage(e))
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun getPanelsByFolder(folderIdJson: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.panelsError("لطفا وارد شوید")
+                val folderId = folderIdJson.trim().let { if (it.isEmpty() || it == "null") null else it.toLongOrNull() }
+                val list = panelRepository.getByUserIdAndFolderId(userId, folderId)
+                BridgeJson.panelsResult(panelsToJsonArray(list))
+            } catch (e: Exception) {
+                Log.e(TAG, "getPanelsByFolder error", e)
+                BridgeJson.panelsError(userFacingMessage(e))
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun createPanel(panelJson: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.error("لطفا وارد شوید")
+                val entity = jsonToPanel(panelJson) ?: return@runBlocking BridgeJson.error("داده پنل نامعتبر است")
+                val withUser = entity.copy(userId = userId, createdAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis())
+                val id = panelRepository.insert(withUser)
+                org.json.JSONObject().apply { put("success", true); put("id", id) }.toString()
+            } catch (e: Exception) {
+                Log.e(TAG, "createPanel error", e)
+                BridgeJson.error(userFacingMessage(e))
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun updatePanel(panelJson: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.error("لطفا وارد شوید")
+                val entity = jsonToPanel(panelJson) ?: return@runBlocking BridgeJson.error("داده پنل نامعتبر است")
+                val existing = panelRepository.getById(entity.id) ?: return@runBlocking BridgeJson.error("پنل یافت نشد")
+                if (existing.userId != userId) return@runBlocking BridgeJson.error("دسترسی غیرمجاز")
+                panelRepository.update(entity.copy(updatedAt = System.currentTimeMillis()))
+                BridgeJson.success()
+            } catch (e: Exception) {
+                Log.e(TAG, "updatePanel error", e)
+                BridgeJson.error(userFacingMessage(e))
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun deletePanel(panelId: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.error("لطفا وارد شوید")
+                val id = panelId.trim().toLongOrNull() ?: return@runBlocking BridgeJson.error("شناسه پنل نامعتبر است")
+                val existing = panelRepository.getById(id) ?: return@runBlocking BridgeJson.error("پنل یافت نشد")
+                if (existing.userId != userId) return@runBlocking BridgeJson.error("دسترسی غیرمجاز")
+                panelRepository.deleteById(id)
+                BridgeJson.success()
+            } catch (e: Exception) {
+                Log.e(TAG, "deletePanel error", e)
+                BridgeJson.error(userFacingMessage(e))
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun setPanelFolder(panelId: String, folderId: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.error("لطفا وارد شوید")
+                val pId = panelId.trim().toLongOrNull() ?: return@runBlocking BridgeJson.error("شناسه پنل نامعتبر است")
+                val fId = folderId.trim().let { if (it.isEmpty() || it == "null") null else it.toLongOrNull() }
+                val existing = panelRepository.getById(pId) ?: return@runBlocking BridgeJson.error("پنل یافت نشد")
+                if (existing.userId != userId) return@runBlocking BridgeJson.error("دسترسی غیرمجاز")
+                panelRepository.setPanelFolder(pId, fId)
+                BridgeJson.success()
+            } catch (e: Exception) {
+                Log.e(TAG, "setPanelFolder error", e)
+                BridgeJson.error(userFacingMessage(e))
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun getFolders(): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.foldersError("لطفا وارد شوید")
+                val list = panelFolderRepository.getByUserId(userId)
+                BridgeJson.foldersResult(foldersToJsonArray(list))
+            } catch (e: Exception) {
+                Log.e(TAG, "getFolders error", e)
+                BridgeJson.foldersError(userFacingMessage(e))
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun createFolder(name: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.error("لطفا وارد شوید")
+                val trimmed = name.trim().takeIf { it.isNotEmpty() } ?: return@runBlocking BridgeJson.error("نام پوشه الزامی است")
+                val folder = PanelFolderEntity(userId = userId, name = trimmed)
+                val id = panelFolderRepository.insert(folder)
+                org.json.JSONObject().apply { put("success", true); put("id", id) }.toString()
+            } catch (e: Exception) {
+                Log.e(TAG, "createFolder error", e)
+                BridgeJson.error(userFacingMessage(e))
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun updateFolder(folderId: String, name: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.error("لطفا وارد شوید")
+                val id = folderId.trim().toLongOrNull() ?: return@runBlocking BridgeJson.error("شناسه پوشه نامعتبر است")
+                val trimmed = name.trim().takeIf { it.isNotEmpty() } ?: return@runBlocking BridgeJson.error("نام پوشه الزامی است")
+                val existing = panelFolderRepository.getById(id) ?: return@runBlocking BridgeJson.error("پوشه یافت نشد")
+                if (existing.userId != userId) return@runBlocking BridgeJson.error("دسترسی غیرمجاز")
+                panelFolderRepository.update(existing.copy(name = trimmed))
+                BridgeJson.success()
+            } catch (e: Exception) {
+                Log.e(TAG, "updateFolder error", e)
+                BridgeJson.error(userFacingMessage(e))
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun deleteFolder(folderId: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.error("لطفا وارد شوید")
+                val id = folderId.trim().toLongOrNull() ?: return@runBlocking BridgeJson.error("شناسه پوشه نامعتبر است")
+                val existing = panelFolderRepository.getById(id) ?: return@runBlocking BridgeJson.error("پوشه یافت نشد")
+                if (existing.userId != userId) return@runBlocking BridgeJson.error("دسترسی غیرمجاز")
+                panelRepository.clearFolderIdForFolder(id)
+                panelFolderRepository.deleteById(id)
+                BridgeJson.success()
+            } catch (e: Exception) {
+                Log.e(TAG, "deleteFolder error", e)
+                BridgeJson.error(userFacingMessage(e))
+            }
+        }
+    }
+
+    private fun panelToJson(p: PanelEntity): String {
+        val o = JSONObject()
+        o.put("id", p.id)
+        o.put("userId", p.userId)
+        o.put("folderId", p.folderId ?: JSONObject.NULL)
+        o.put("icon", p.icon ?: JSONObject.NULL)
+        o.put("name", p.name)
+        o.put("gsmPhone", p.gsmPhone ?: JSONObject.NULL)
+        o.put("ip", p.ip ?: JSONObject.NULL)
+        o.put("port", p.port ?: JSONObject.NULL)
+        o.put("code", p.code ?: JSONObject.NULL)
+        o.put("description", p.description ?: JSONObject.NULL)
+        o.put("serialNumber", p.serialNumber ?: JSONObject.NULL)
+        o.put("isActive", p.isActive)
+        o.put("locationId", p.locationId ?: JSONObject.NULL)
+        o.put("codeUD", p.codeUD ?: JSONObject.NULL)
+        o.put("createdAt", p.createdAt)
+        o.put("updatedAt", p.updatedAt)
+        return o.toString()
+    }
+
+    private fun panelsToJsonArray(list: List<PanelEntity>): String =
+        if (list.isEmpty()) "[]" else list.joinToString(prefix = "[", postfix = "]", transform = ::panelToJson)
+
+    private fun jsonToPanel(json: String): PanelEntity? {
+        return try {
+            val o = JSONObject(json)
+            val name = o.optString("name").takeIf { it.isNotEmpty() } ?: return null
+            PanelEntity(
+                id = o.optLong("id", 0L),
+                userId = 0L,
+                folderId = o.optString("folderId").takeIf { it.isNotEmpty() }?.toLongOrNull(),
+                icon = o.optString("icon").takeIf { it.isNotEmpty() },
+                name = name,
+                gsmPhone = o.optString("gsmPhone").takeIf { it.isNotEmpty() },
+                ip = o.optString("ip").takeIf { it.isNotEmpty() },
+                port = o.optInt("port", -1).takeIf { it >= 0 },
+                code = o.optString("code").takeIf { it.isNotEmpty() },
+                description = o.optString("description").takeIf { it.isNotEmpty() },
+                serialNumber = o.optString("serialNumber").takeIf { it.isNotEmpty() },
+                isActive = o.optBoolean("isActive", true),
+                locationId = o.optString("locationId").takeIf { it.isNotEmpty() }?.toLongOrNull() ?: o.optLong("locationId", -1L).let { if (it >= 0) it else null },
+                codeUD = o.optString("codeUD").takeIf { it.isNotEmpty() },
+                createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                updatedAt = o.optLong("updatedAt", System.currentTimeMillis())
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "jsonToPanel error", e)
+            null
+        }
+    }
+
+    private fun folderToJson(f: PanelFolderEntity): String {
+        val o = JSONObject()
+        o.put("id", f.id)
+        o.put("userId", f.userId)
+        o.put("name", f.name)
+        o.put("sortOrder", f.sortOrder)
+        return o.toString()
+    }
+
+    private fun foldersToJsonArray(list: List<PanelFolderEntity>): String =
+        if (list.isEmpty()) "[]" else list.joinToString(prefix = "[", postfix = "]", transform = ::folderToJson)
+
     /**
      * Start biometric login. Async: shows BiometricPrompt, then invokes JS callback with result JSON.
      * Callback receives one string argument: JSON like {"success":true,"token":"...","user":{...}} or {"success":false,"error":"..."}.
@@ -186,18 +495,18 @@ class WebViewBridge(
                 biometricPrefs.biometricEnabledFlow.first()
             }
             if (!biometricEnabled) {
-                deliverBiometricResult(callbackJsName, """{"success":false,"error":"ورود با بیومتریک غیرفعال است"}""")
+                deliverBiometricResult(callbackJsName, BridgeJson.error("ورود با بیومتریک غیرفعال است"))
                 return@post
             }
             if (!biometricCredentialStore.hasStoredCredentials()) {
-                deliverBiometricResult(callbackJsName, """{"success":false,"error":"ابتدا با رمز عبور وارد شوید"}""")
+                deliverBiometricResult(callbackJsName, BridgeJson.error("ابتدا با رمز عبور وارد شوید"))
                 return@post
             }
             val biometricManager = BiometricManager.from(activity)
             when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)) {
                 BiometricManager.BIOMETRIC_SUCCESS -> { /* proceed */ }
                 else -> {
-                    deliverBiometricResult(callbackJsName, """{"success":false,"error":"احراز هویت بیومتریک در دسترس نیست"}""")
+                    deliverBiometricResult(callbackJsName, BridgeJson.error("احراز هویت بیومتریک در دسترس نیست"))
                     return@post
                 }
             }
@@ -219,10 +528,9 @@ class WebViewBridge(
                         }
                         if (pair != null) {
                             val (token, userJson) = pair
-                            val resultJson = """{"success":true,"token":"${escapeJson(token)}","user":$userJson}"""
-                            mainHandler.post { deliverBiometricResult(callbackJsName, resultJson) }
+                            mainHandler.post { deliverBiometricResult(callbackJsName, BridgeJson.loginSuccess(token, userJson)) }
                         } else {
-                            mainHandler.post { deliverBiometricResult(callbackJsName, """{"success":false,"error":"خطا در بازیابی نشست"}""") }
+                            mainHandler.post { deliverBiometricResult(callbackJsName, BridgeJson.error("خطا در بازیابی نشست")) }
                         }
                     }
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -230,7 +538,7 @@ class WebViewBridge(
                             BiometricPrompt.ERROR_USER_CANCELED, BiometricPrompt.ERROR_NEGATIVE_BUTTON -> "لغو شد"
                             else -> "خطا در احراز هویت: $errString"
                         }
-                        mainHandler.post { deliverBiometricResult(callbackJsName, """{"success":false,"error":"$msg"}""") }
+                        mainHandler.post { deliverBiometricResult(callbackJsName, BridgeJson.error(msg)) }
                     }
                 }
             )
@@ -253,6 +561,11 @@ class WebViewBridge(
     private fun escapeJsonForJs(s: String): String =
         "'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\r", "\\r").replace("\n", "\\n") + "'"
 
+    /** Single place for user-facing error messages from exceptions (Persian). */
+    private fun userFacingMessage(e: Exception): String =
+        e.message?.takeIf { it.isNotEmpty() }?.replace("\"", "'")
+            ?: "خطایی رخ داد. لطفا دوباره تلاش کنید."
+
     private fun jsonToUser(json: String): UserEntity? = try {
         val o = JSONObject(json)
         UserEntity(
@@ -273,9 +586,6 @@ class WebViewBridge(
         Log.e(TAG, "jsonToUser error", e)
         null
     }
-
-    private fun escapeJson(s: String): String =
-        s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")
 
     private fun userToJson(user: UserEntity): String {
         val o = JSONObject()

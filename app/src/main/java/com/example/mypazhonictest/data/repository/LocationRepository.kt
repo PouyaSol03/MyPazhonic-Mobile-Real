@@ -26,4 +26,8 @@ class LocationRepository @Inject constructor(
 
     suspend fun getById(id: Long): LocationEntity? =
         locationDao.getById(id)
+
+    /** All cities under a state (State → County → City). */
+    suspend fun getCitiesByStateId(stateId: Long): List<LocationEntity> =
+        locationDao.getCitiesByStateId(stateId)
 }

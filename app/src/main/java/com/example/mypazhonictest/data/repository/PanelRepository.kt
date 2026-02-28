@@ -38,4 +38,9 @@ class PanelRepository @Inject constructor(
         val panel = panelDao.getById(panelId) ?: return
         panelDao.update(panel.copy(folderId = folderId, updatedAt = System.currentTimeMillis()))
     }
+
+    suspend fun setPanelLastStatus(panelId: Long, lastStatus: String?) {
+        val panel = panelDao.getById(panelId) ?: return
+        panelDao.update(panel.copy(lastStatus = lastStatus?.takeIf { it.isNotBlank() }, updatedAt = System.currentTimeMillis()))
+    }
 }

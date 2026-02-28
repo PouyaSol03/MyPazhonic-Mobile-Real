@@ -14,6 +14,8 @@ import com.example.mypazhonictest.data.repository.LocationRepository
 import com.example.mypazhonictest.data.repository.PanelFolderRepository
 import com.example.mypazhonictest.data.repository.PanelRepository
 import com.example.mypazhonictest.data.repository.UserRepository
+import com.example.mypazhonictest.panel.PanelSerialService
+import com.example.mypazhonictest.panel.PanelTcpClient
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -112,4 +114,15 @@ object AppModule {
     ): BiometricCredentialStore {
         return BiometricCredentialStore(context)
     }
+
+    @Provides
+    @Singleton
+    fun providePanelTcpClient(): PanelTcpClient = PanelTcpClient()
+
+    @Provides
+    @Singleton
+    fun providePanelSerialService(
+        tcpClient: PanelTcpClient,
+        userRepository: UserRepository
+    ): PanelSerialService = PanelSerialService(tcpClient, userRepository)
 }

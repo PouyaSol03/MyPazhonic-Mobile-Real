@@ -17,11 +17,12 @@ class UserRepository(
 ) {
     fun observeLatestUser(): Flow<UserEntity?> = userDao.observeLatestUser()
 
-    /** Returns the current user only if there is a valid session (token). */
+    /** Returns the current user only if there is a valid session (token). Uses session userId so the logged-in user (with nationalCode etc.) is returned. */
     suspend fun getLatestUser(): UserEntity? {
         val token = sessionPrefs.getSessionToken() ?: return null
         if (token.isEmpty()) return null
-        return userDao.getLatestUser()
+        val userId = sessionPrefs.getUserId() ?: return userDao.getLatestUser()
+        return userDao.getById(userId) ?: userDao.getLatestUser()
     }
 
     suspend fun registerLocalUser(user: UserEntity): Long {

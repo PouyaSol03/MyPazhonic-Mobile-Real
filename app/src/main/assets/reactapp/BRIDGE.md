@@ -52,6 +52,23 @@ All methods are synchronous from JS (native may run async work and return when d
 | `logout()` | Log out: clears session token and local user data. |
 | `setBiometricEnabled("true" \| "false")` | Enable or disable biometric preference. |
 | `getBiometricEnabled()` | Returns `"true"` or `"false"`. |
+| `getSerialNumber(codeUD, ip, port)` | Get panel serial number via TCP. All args strings. Returns `{"serialNumber":"..."}` or `{"serialNumber":null,"error":"..."}`. Requires codeUD, ip, port (e.g. from CreatePanel form). |
+
+### Panel (create/update payload)
+
+Panel entity includes `ip`, `port` (number), `codeUD`, `serialNumber`, and other fields. For **CreatePanelSheet**: use IP and port in the form; on "download" button call `getSerialNumber(codeUD, ip, port)` and set the returned value into the serial number input.
+
+### Example (React) – getSerialNumber
+
+```javascript
+const raw = window.AndroidBridge?.getSerialNumber(codeUD, ip, String(port));
+const data = raw ? JSON.parse(raw) : {};
+if (data.error) {
+  // show toast: data.error
+} else if (data.serialNumber) {
+  setSerialNumber(data.serialNumber);
+}
+```
 
 ### Example (React) – register, login, token-based
 

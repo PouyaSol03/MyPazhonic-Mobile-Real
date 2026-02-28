@@ -14,7 +14,7 @@ import com.example.mypazhonictest.data.local.entity.UserEntity
 
 @Database(
     entities = [UserEntity::class, LocationEntity::class, PanelEntity::class, PanelFolderEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 @TypeConverters(LocationTypeConverter::class)

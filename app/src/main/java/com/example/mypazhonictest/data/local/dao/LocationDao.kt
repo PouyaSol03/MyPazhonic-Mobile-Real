@@ -35,6 +35,10 @@ interface LocationDao {
     @Query("SELECT * FROM location WHERE id = :id")
     suspend fun getById(id: Long): LocationEntity?
 
+    /** All cities under a state: cities whose parentId is a county whose parentId = stateId. */
+    @Query("SELECT c.* FROM location c INNER JOIN location county ON c.parentId = county.id WHERE county.parentId = :stateId AND c.type = 'CITY' ORDER BY c.sortOrder ASC, c.name ASC")
+    suspend fun getCitiesByStateId(stateId: Long): List<LocationEntity>
+
     @Query("SELECT * FROM location WHERE type = :type AND (code = :code OR (code IS NULL AND :code IS NULL)) LIMIT 1")
     suspend fun getByTypeAndCode(type: LocationType, code: String?): LocationEntity?
 }

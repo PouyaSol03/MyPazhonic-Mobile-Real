@@ -29,6 +29,7 @@ import com.example.mypazhonictest.data.repository.LocationRepository
 import com.example.mypazhonictest.data.repository.PanelFolderRepository
 import com.example.mypazhonictest.data.repository.PanelRepository
 import com.example.mypazhonictest.data.repository.UserRepository
+import com.example.mypazhonictest.panel.PanelSerialService
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -60,6 +61,9 @@ class MainActivity : AppCompatActivity() {
 
     @Inject
     lateinit var panelFolderRepository: PanelFolderRepository
+
+    @Inject
+    lateinit var panelSerialService: PanelSerialService
 
     private lateinit var webView: WebView
     private var splashView: View? = null
@@ -137,6 +141,7 @@ class MainActivity : AppCompatActivity() {
             locationRepository = locationRepository,
             panelRepository = panelRepository,
             panelFolderRepository = panelFolderRepository,
+            panelSerialService = panelSerialService,
             biometricPrefs = biometricPrefs,
             biometricCredentialStore = biometricCredentialStore,
             mainHandler = handler,

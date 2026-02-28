@@ -19,6 +19,7 @@ import com.example.mypazhonictest.data.repository.LocationRepository
 import com.example.mypazhonictest.data.repository.PanelFolderRepository
 import com.example.mypazhonictest.data.repository.PanelRepository
 import com.example.mypazhonictest.data.repository.UserRepository
+import com.example.mypazhonictest.panel.PanelSerialService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -35,6 +36,7 @@ class WebViewBridge(
     private val locationRepository: LocationRepository,
     private val panelRepository: PanelRepository,
     private val panelFolderRepository: PanelFolderRepository,
+    private val panelSerialService: PanelSerialService,
     private val biometricPrefs: BiometricPrefs,
     private val biometricCredentialStore: BiometricCredentialStore,
     private val mainHandler: Handler,
@@ -208,6 +210,22 @@ class WebViewBridge(
         }
     }
 
+    /** Get all cities under a state (State → County → City). stateId = long string. */
+    @JavascriptInterface
+    fun getCitiesByStateId(stateId: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val id = stateId.trim().toLongOrNull()
+                    ?: return@runBlocking BridgeJson.locationsError("شناسه استان نامعتبر است")
+                val list = locationRepository.getCitiesByStateId(id)
+                BridgeJson.locationsResult(locationsToJsonArray(list))
+            } catch (e: Exception) {
+                Log.e(TAG, "getCitiesByStateId error", e)
+                BridgeJson.locationsError(userFacingMessage(e))
+            }
+        }
+    }
+
     /** Get locations of given type with specific parent. type = "COUNTRY"|"STATE"|"COUNTY"|"CITY", parentId = long string. Returns same shape. */
     @JavascriptInterface
     fun getLocationsByTypeAndParent(type: String, parentId: String): String {
@@ -304,7 +322,23 @@ class WebViewBridge(
                 val entity = jsonToPanel(panelJson) ?: return@runBlocking BridgeJson.error("داده پنل نامعتبر است")
                 val existing = panelRepository.getById(entity.id) ?: return@runBlocking BridgeJson.error("پنل یافت نشد")
                 if (existing.userId != userId) return@runBlocking BridgeJson.error("دسترسی غیرمجاز")
-                panelRepository.update(entity.copy(updatedAt = System.currentTimeMillis()))
+                val merged = existing.copy(
+                    name = entity.name,
+                    folderId = entity.folderId,
+                    icon = entity.icon,
+                    gsmPhone = entity.gsmPhone,
+                    ip = entity.ip,
+                    port = entity.port,
+                    code = entity.code,
+                    description = entity.description,
+                    serialNumber = entity.serialNumber,
+                    isActive = entity.isActive,
+                    locationId = entity.locationId,
+                    codeUD = entity.codeUD,
+                    lastStatus = entity.lastStatus,
+                    updatedAt = System.currentTimeMillis()
+                )
+                panelRepository.update(merged)
                 BridgeJson.success()
             } catch (e: Exception) {
                 Log.e(TAG, "updatePanel error", e)
@@ -345,6 +379,25 @@ class WebViewBridge(
                 BridgeJson.success()
             } catch (e: Exception) {
                 Log.e(TAG, "setPanelFolder error", e)
+                BridgeJson.error(userFacingMessage(e))
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun setPanelLastStatus(panelId: String, lastStatus: String): String {
+        return runBlocking(Dispatchers.IO) {
+            try {
+                val userId = currentUserIdOrNull()
+                    ?: return@runBlocking BridgeJson.error("لطفا وارد شوید")
+                val pId = panelId.trim().toLongOrNull() ?: return@runBlocking BridgeJson.error("شناسه پنل نامعتبر است")
+                val existing = panelRepository.getById(pId) ?: return@runBlocking BridgeJson.error("پنل یافت نشد")
+                if (existing.userId != userId) return@runBlocking BridgeJson.error("دسترسی غیرمجاز")
+                val status = lastStatus.trim().takeIf { it.isNotEmpty() }
+                panelRepository.setPanelLastStatus(pId, status)
+                BridgeJson.success()
+            } catch (e: Exception) {
+                Log.e(TAG, "setPanelLastStatus error", e)
                 BridgeJson.error(userFacingMessage(e))
             }
         }
@@ -420,6 +473,43 @@ class WebViewBridge(
         }
     }
 
+    /** Get serial number from panel via TCP. Params: codeUD, ip, port (string). Returns { serialNumber } or { error }. */
+    @JavascriptInterface
+    fun getSerialNumber(codeUD: String, ip: String, port: String): String {
+        Log.d(TAG, "getSerialNumber request: codeUD=${codeUD.take(8)}..., ip=$ip, port=$port")
+        return runBlocking(Dispatchers.IO) {
+            try {
+                if (codeUD.isBlank()) {
+                    Log.w(TAG, "getSerialNumber: codeUD is blank")
+                    return@runBlocking BridgeJson.serialNumberError("کد آپلود دانلود اجباری است")
+                }
+                if (ip.isBlank() || port.isBlank()) {
+                    Log.w(TAG, "getSerialNumber: ip or port is blank")
+                    return@runBlocking BridgeJson.serialNumberError("آی پی و پورت اجباری هستند")
+                }
+                val portInt = port.trim().toIntOrNull()
+                if (portInt == null) {
+                    Log.w(TAG, "getSerialNumber: invalid port=$port")
+                    return@runBlocking BridgeJson.serialNumberError("پورت نامعتبر است")
+                }
+                val result = panelSerialService.getSerialNumber(codeUD.trim(), ip.trim(), portInt)
+                result.fold(
+                    onSuccess = {
+                        Log.d(TAG, "getSerialNumber success: serialNumber=${it.take(12)}...")
+                        BridgeJson.serialNumberResult(it)
+                    },
+                    onFailure = {
+                        Log.e(TAG, "getSerialNumber failure", it)
+                        BridgeJson.serialNumberError(userFacingMessage(it))
+                    }
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "getSerialNumber error", e)
+                BridgeJson.serialNumberError(userFacingMessage(e))
+            }
+        }
+    }
+
     private fun panelToJson(p: PanelEntity): String {
         val o = JSONObject()
         o.put("id", p.id)
@@ -436,6 +526,7 @@ class WebViewBridge(
         o.put("isActive", p.isActive)
         o.put("locationId", p.locationId ?: JSONObject.NULL)
         o.put("codeUD", p.codeUD ?: JSONObject.NULL)
+        o.put("lastStatus", p.lastStatus ?: JSONObject.NULL)
         o.put("createdAt", p.createdAt)
         o.put("updatedAt", p.updatedAt)
         return o.toString()
@@ -463,6 +554,7 @@ class WebViewBridge(
                 isActive = o.optBoolean("isActive", true),
                 locationId = o.optString("locationId").takeIf { it.isNotEmpty() }?.toLongOrNull() ?: o.optLong("locationId", -1L).let { if (it >= 0) it else null },
                 codeUD = o.optString("codeUD").takeIf { it.isNotEmpty() },
+                lastStatus = o.optString("lastStatus").takeIf { it.isNotEmpty() },
                 createdAt = o.optLong("createdAt", System.currentTimeMillis()),
                 updatedAt = o.optLong("updatedAt", System.currentTimeMillis())
             )
@@ -562,7 +654,7 @@ class WebViewBridge(
         "'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\r", "\\r").replace("\n", "\\n") + "'"
 
     /** Single place for user-facing error messages from exceptions (Persian). */
-    private fun userFacingMessage(e: Exception): String =
+    private fun userFacingMessage(e: Throwable): String =
         e.message?.takeIf { it.isNotEmpty() }?.replace("\"", "'")
             ?: "خطایی رخ داد. لطفا دوباره تلاش کنید."
 

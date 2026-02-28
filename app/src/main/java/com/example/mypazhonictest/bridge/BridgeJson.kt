@@ -51,4 +51,11 @@ object BridgeJson {
 
     fun foldersError(message: String): String =
         """{"folders":[],"error":"${escape(message)}"}"""
+
+    /** Panel serial number: { "serialNumber": "..." } */
+    fun serialNumberResult(serialNumber: String): String =
+        """{"serialNumber":"${escape(serialNumber)}"}"""
+
+    fun serialNumberError(message: String): String =
+        """{"serialNumber":null,"error":"${escape(message)}"}"""
 }

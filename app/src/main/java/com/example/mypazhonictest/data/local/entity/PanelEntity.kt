@@ -43,6 +43,9 @@ data class PanelEntity(
     val locationId: Long? = null,
     val codeUD: String? = null,
 
+    /** Last alarm status from panel after connect: "ARM" or "DISARM", null when never connected. */
+    val lastStatus: String? = null,
+
     @ColumnInfo(name = "create_at")
     val createdAt: Long = System.currentTimeMillis(),
 
